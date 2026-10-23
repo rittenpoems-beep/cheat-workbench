@@ -1,0 +1,11 @@
+export const PROTOCOL = 1;
+export const SERVER_URL = 'http://127.0.0.1:4317';
+export const HOME_URL = 'https://creator.douyin.com/creator-micro/home';
+export const MANAGE_URL = 'https://creator.douyin.com/creator-micro/content/manage';
+export const CREATOR_ORIGIN = 'https://creator.douyin.com';
+export const MAX_PAGES = 12;
+export const MAX_LIMIT = 30;
+export const ALARM_NAME = 'wb-poll';
+export const STORAGE_TOKEN = 'token';
+export const STORAGE_STATUS = 'status';
+export const STORAGE_ACTIVE = 'active';

@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "创作者实验台连接器",
+  "version": "0.1.0",
+  "description": "复用 Edge 中已登录的抖音创作者中心，把作品与指标导入本机创作者实验台；只读取页面自身的作品响应，不读取 Cookie。",
+  "minimum_chrome_version": "111",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": [
+    "https://creator.douyin.com/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "创作者实验台连接器"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://creator.douyin.com/*"],
+      "js": ["src/lib/extract.js", "src/content/main-world.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    },
+    {
+      "matches": ["https://creator.douyin.com/*"],
+      "js": ["src/content/relay.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED",
+      "all_frames": false
+    }
+  ]
+}

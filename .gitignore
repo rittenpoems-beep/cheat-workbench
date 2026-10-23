@@ -20,6 +20,7 @@ venv/
 # Secrets / environment
 .env
 .env.*
+!apps/workbench/.env.example
 
 # SQLite databases
 *.sqlite
@@ -60,3 +61,15 @@ content.db
 # 临时文件
 *.tmp
 *.log
+
+# Visual workbench local runtime / browser sessions / dependencies
+apps/workbench/node_modules/
+apps/workbench/dist/
+apps/workbench/.env
+apps/workbench/.workbench-data/
+apps/workbench/.runtime/
+apps/workbench/collector/__pycache__/
+apps/workbench/verification/
+
+# 根目录 QA 截图与验收记录
+/verification/

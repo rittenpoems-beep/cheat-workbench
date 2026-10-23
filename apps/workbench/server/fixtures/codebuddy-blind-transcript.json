@@ -1,0 +1,65 @@
+[
+  {
+    "type": "message",
+    "role": "user",
+    "content": [
+      {
+        "type": "input_text",
+        "text": "[Sanitized Gate 0 fixture] CodeBuddy system prompt, workspace context and blind payload omitted."
+      }
+    ]
+  },
+  {
+    "type": "reasoning",
+    "summary": [
+      {
+        "type": "summary_text",
+        "text": "Dispatch the blind-review payload once to the configured sub-agent."
+      }
+    ],
+    "providerData": {
+      "model": "deepseek-flash"
+    }
+  },
+  {
+    "type": "function_call",
+    "name": "Agent",
+    "callId": "call-gate0-sanitized",
+    "arguments": "{\"description\":\"Independent blind reviewer for one draft only\",\"prompt\":\"[blind payload omitted from public fixture]\",\"subagent_type\":\"cheat-blind-reviewer\",\"run_in_background\":false}"
+  },
+  {
+    "type": "function_call_result",
+    "name": "Agent",
+    "callId": "call-gate0-sanitized",
+    "status": "completed",
+    "output": {
+      "type": "text",
+      "text": "{\"score\": 87}\n\n[Agent ID: agent-sanitized]"
+    }
+  },
+  {
+    "type": "message",
+    "role": "assistant",
+    "content": [
+      {
+        "type": "output_text",
+        "text": "{\"score\": 87}"
+      }
+    ],
+    "providerData": {
+      "model": "deepseek-flash"
+    }
+  },
+  {
+    "type": "result",
+    "subtype": "success",
+    "is_error": false,
+    "result": "{\"score\": 87}",
+    "usage": {
+      "input_tokens": 22104,
+      "output_tokens": 862,
+      "cache_creation_input_tokens": 5834,
+      "cache_read_input_tokens": 12544
+    }
+  }
+]

@@ -1,0 +1,65 @@
+{
+  "capturedAt": "2026-10-22T01:00:00Z",
+  "workList": {
+    "status_code": 0,
+    "data": {
+      "aweme_list": [
+        {
+          "aweme_id": "7412345678901234567",
+          "desc": "真实作品标题",
+          "create_time": 1700000000,
+          "statistics": {
+            "play_count": 0,
+            "digg_count": "15",
+            "comment_count": 3
+          }
+        },
+        {
+          "aweme_id": "not-a-video",
+          "desc": "无效 ID"
+        }
+      ],
+      "has_more": true
+    }
+  },
+  "nestedPayload": {
+    "data": {
+      "data": {
+        "item_list": [
+          { "aweme_info": { "aweme_id": "456", "title": "嵌套标题", "stats": { "play_count": 12 } } },
+          {},
+          "bad"
+        ]
+      }
+    }
+  },
+  "accountPayload": {
+    "status_code": 0,
+    "data": {
+      "user_info": {
+        "nickname": "创作者",
+        "uid": 123,
+        "sec_uid": "SECRET_SHOULD_NOT_BE_SENT"
+      }
+    }
+  },
+  "mergeFirst": {
+    "aweme_id": "123",
+    "statistics": { "play_count": 7 }
+  },
+  "mergeSecond": {
+    "aweme_id": "123",
+    "statistics": { "digg_count": 0 }
+  },
+  "metricVariants": {
+    "aweme_id": "789",
+    "desc": "指标变体",
+    "create_time": 1700000000000,
+    "statistic_data": {
+      "play_cnt": "0",
+      "like_count": "1.2万",
+      "comment_cnt": -1,
+      "favorite_count": 4
+    }
+  }
+}

@@ -35,6 +35,19 @@ Your doubt — predicted too.
 
 ---
 
+## 🖥️ Visual Workbench (this fork)
+
+This repository is a fork of [XBuilderLAB/cheat-on-content](https://github.com/XBuilderLAB/cheat-on-content). It keeps the upstream skills and adds a local web application under [`apps/workbench`](apps/workbench/) — guided Cheat initialization, topics and drafts, blind prediction and review, Edge account alignment, and task history.
+
+- Default AI channel: the local **CodeBuddy CLI main agent**
+- Blind scoring: CodeBuddy main agent → verified `cheat-blind-reviewer` **sub-agent** through the built-in `Agent` tool
+- Optional: a standalone model API for non-blind tasks and as CodeBuddy's backend
+- Claude Code / Codex / Qoder adapters: experimental / in development, compatibility not guaranteed yet
+
+Start it on Windows with `apps/workbench/start-workbench.ps1`; setup, channels and limitations are documented in [WORKBENCH.md](WORKBENCH.md). The upstream skill and its workflows are unchanged, and the upstream MIT license is preserved.
+
+---
+
 ## 🎬 What it actually does
 
 Most creators live in the same gambling loop:

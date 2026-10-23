@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>创作者实验台连接器</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div>
+      <span class="eyebrow">CREATOR WORKBENCH</span>
+      <h1>创作者实验台连接器</h1>
+    </div>
+    <span id="dot" class="dot" title="连接状态"></span>
+  </header>
+
+  <p id="state" class="state">正在读取状态…</p>
+
+  <dl>
+    <div><dt>本机工作台</dt><dd id="server">127.0.0.1:4317</dd></div>
+    <div><dt>抖音账号</dt><dd id="account">尚未识别</dd></div>
+    <div><dt>上次同步</dt><dd id="last-sync">尚未同步</dd></div>
+    <div><dt>扩展版本</dt><dd id="version">-</dd></div>
+  </dl>
+
+  <section id="unpaired" hidden>
+    <label for="code">粘贴工作台生成的配对码</label>
+    <input id="code" type="text" inputmode="text" autocomplete="one-time-code" spellcheck="false" placeholder="ABCD-EFGH" maxlength="9">
+    <div class="actions">
+      <button id="pair">连接工作台</button>
+    </div>
+    <p class="hint">在工作台点击顶栏的「Edge 未连接」生成配对码；配对码 10 分钟内有效，只需配对一次。</p>
+  </section>
+
+  <section id="paired" hidden>
+    <p id="paired-hint" class="hint">配对会保留在本机。工作台重启后会自动重连，不需要再次粘贴配对码。</p>
+    <div class="actions">
+      <button id="retry" class="ghost">立即重连</button>
+      <button id="disconnect" class="danger">断开连接</button>
+    </div>
+  </section>
+
+  <p id="error" class="error" hidden></p>
+  <p id="pairing" class="hint" hidden></p>
+
+  <script src="popup.js"></script>
+</body>
+</html>
