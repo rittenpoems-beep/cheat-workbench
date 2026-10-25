@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Runtime, extractJson, runAgentProcess } from './runtime.js';
+import { resetCodeBuddyDiscovery } from './channels/codebuddy.js';
 
 const upstreamRoot = fileURLToPath(new URL('../../../', import.meta.url));
 async function fixture() {
@@ -33,7 +34,7 @@ test('runtime configuration responses and persisted settings do not disclose API
   } finally { await cleanup(); }
 });
 
-test('blind review fails closed instead of falling back to the model API or the CodeBuddy login', async () => {
+test('blind review fails closed until the CodeBuddy login is verified instead of falling back', async () => {
   const { runtime, cleanup } = await fixture();
   const originalFetch = globalThis.fetch;
   let calls = 0;
@@ -42,11 +43,54 @@ test('blind review fails closed instead of falling back to the model API or the 
     globalThis.fetch = async () => { calls++; throw new Error('盲评不得偷偷调用模型 API'); };
     await assert.rejects(runtime.invoke({ skill: 'cheat-score-blind', blind: true, prompt: '当前稿件：测试输入。\n纯评分规则：仅测试规则。', progress: () => undefined }), error => {
       assert.equal((error as any).code, 'BLIND_CHANNEL_UNAVAILABLE');
-      assert.ok((error as Error).message.includes('模型 API'));
+      assert.ok(/登录|CLI/.test((error as Error).message));
       return true;
     });
     assert.equal(calls, 0);
   } finally { globalThis.fetch = originalFetch; await cleanup(); }
+});
+
+test('account login test flips blind readiness and then delegates through the Agent transcript', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cheat-account-blind-'));
+  const savedCli = process.env.WORKBENCH_CODEBUDDY_CLI;
+  try {
+    const cli = path.join(root, 'codebuddy');
+    await fs.writeFile(cli, `#!/usr/bin/env node
+const fs = require('fs');
+const args = process.argv.slice(2);
+if (args.includes('--version')) { console.log('9.9.9-fake'); process.exit(0); }
+const input = fs.readFileSync(0, 'utf8');
+const result = { type: 'result', subtype: 'success', is_error: false, result: '{"ok":true}', usage: {} };
+if (args.includes('Agent')) {
+  const callId = 'call-fake';
+  process.stdout.write(JSON.stringify([
+    { type: 'function_call', name: 'Agent', callId, arguments: JSON.stringify({ subagent_type: 'cheat-blind-reviewer', prompt: input, run_in_background: false }) },
+    { type: 'function_call_result', name: 'Agent', callId, status: 'completed', output: { type: 'text', text: '{"score":1}' } },
+    result,
+  ]));
+} else {
+  process.stdout.write(JSON.stringify([result]));
+}
+`);
+    process.env.WORKBENCH_CODEBUDDY_CLI = cli; resetCodeBuddyDiscovery();
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'cheat-account-runtime-'));
+    const runtime = new Runtime(upstreamRoot, directory);
+    try {
+      await runtime.configure({ codebuddyAuth: 'account' });
+      assert.equal(runtime.getSettings().blind.ready, false);
+      const tested = await runtime.testConnection();
+      assert.equal(tested.ok, true);
+      assert.equal(runtime.getSettings().blind.ready, true);
+      const result = await runtime.invoke({ skill: 'cheat-score-blind', blind: true, prompt: '当前稿件：测试输入。\n纯评分规则：仅测试规则。', progress: () => undefined });
+      assert.deepEqual(result.data, { score: 1 });
+      assert.equal(result.provider, 'codebuddy');
+      assert.equal(result.evidence?.freshConfig, false);
+    } finally { await fs.rm(directory, { recursive: true, force: true }); }
+  } finally {
+    if (savedCli === undefined) delete process.env.WORKBENCH_CODEBUDDY_CLI; else process.env.WORKBENCH_CODEBUDDY_CLI = savedCli;
+    resetCodeBuddyDiscovery();
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test('model API request has a fresh two-message input, no history and no tool definitions', async () => {

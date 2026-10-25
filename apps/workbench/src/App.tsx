@@ -15,7 +15,7 @@ import RetrospectiveDialog, { hasPublishedRecord } from './RetrospectiveDialog';
 import { browserTaskResult, edgeChipState, phaseLabel, shouldOpenSession, syncErrorHint } from './browserState';
 import { activeChannelLabel, blindChip, channelAction, channelCodeLabel, channelTone, resolvedCodeBuddyAuth, reviewChannelLabel } from './modelState';
 import type { BrowserPairing } from '../shared/browser';
-import type { Draft, Metrics, Prediction, PredictionProposal, PrimaryChannel, Review, SkillInfo, Snapshot, Task, Topic, Work } from '../shared/types';
+import type { ContextSummary, Draft, Metrics, Prediction, PredictionProposal, PrimaryChannel, Review, SkillInfo, Snapshot, Task, Topic, Work } from '../shared/types';
 
 type Page = 'today' | 'ideas' | 'drafts' | 'reviews' | 'forecast' | 'retro' | 'library' | 'method';
 type View = { id: string; label: string; page?: Page; draftId?: string; workId?: string; documentPath?: string; proposalTaskId?: string; predictionId?: string };
@@ -101,6 +101,7 @@ export default function App() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [busy, setBusy] = useState(false);
   const [chat, setChat] = useState('');
+  const [contextSummary, setContextSummary] = useState<ContextSummary | null>(null);
   const [topicQuery, setTopicQuery] = useState('');
   const [libraryQuery, setLibraryQuery] = useState('');
   const [librarySort, setLibrarySort] = useState<'recent' | 'plays'>('recent');
@@ -215,6 +216,17 @@ export default function App() {
   }, [snapshot?.settings.provider, snapshot?.settings.codebuddyAuth, snapshot?.settings.modelApi, snapshot?.settings.baseUrl, snapshot?.settings.model, snapshot?.settings.budget, snapshot?.settings.deepseekConfigured]);
   useEffect(() => { chatEnd.current?.scrollIntoView({ behavior: 'smooth' }); }, [snapshot?.messages.length]);
   useEffect(() => {
+    if (!assistantOpen) return;
+    const query = new URLSearchParams();
+    if (draft?.id) query.set('draftId', draft.id);
+    if (selectedWorks.length) query.set('workIds', selectedWorks.join(','));
+    let cancelled = false;
+    request<ContextSummary>(`/api/context-summary?${query.toString()}`)
+      .then(data => { if (!cancelled) setContextSummary(data); })
+      .catch(() => { if (!cancelled) setContextSummary(null); });
+    return () => { cancelled = true; };
+  }, [assistantOpen, draft?.id, selectedWorks.join(','), snapshot?.messages.length, request]);
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); setPaletteOpen(open => !open); }
       if (event.key === 'Escape') { setPaletteOpen(false); setTaskOpen(false); setSetupOpen(false); }
@@ -271,6 +283,7 @@ export default function App() {
       setTesting(true); setTestResult(null);
       const result = await request<{ ok: boolean; channel: string; model?: string; latencyMs: number; detail: string }>('/api/settings/test', { method: 'POST', body: '{}' });
       setTestResult({ ok: result.ok, text: `${result.detail}${result.model && !result.detail.includes(result.model) ? ` · ${result.model}` : ''} · ${result.latencyMs}ms` });
+      if (result.ok) await refresh();
       toast(result.ok ? '连接测试通过' : '连接测试未通过', result.ok ? 'success' : 'error');
     } catch (error) { setTestResult({ ok: false, text: (error as Error).message }); toast((error as Error).message, 'error'); }
     finally { setTesting(false); }
@@ -318,7 +331,7 @@ export default function App() {
     if (!message.trim()) return;
     if (draft && dirty && !(await saveDraft())) return;
     setChat('');
-    await job('chat', { message: message.trim(), ...(draft ? { draftId: draft.id } : {}), workIds: selectedWorks }, false);
+    await job('chat', { message: message.trim(), ...(draft ? { draftId: draft.id } : {}), ...(selectedWorks.length ? { workIds: selectedWorks } : {}) }, false);
   };
 
   if (!snapshot) {
@@ -618,7 +631,7 @@ export default function App() {
           {snapshot!.topics.length ? <div className="topic-list">{snapshot!.topics.map((t, i) => <article className="topic-row" key={t.id}>
             <div className="topic-number">{String(i + 1).padStart(2, '0')}</div>
             <div className="topic-body">
-              <div className="topic-meta"><span>{date(t.capturedAt)}</span>{t.sourceTitle && <a href={t.sourceUrl} target="_blank" rel="noreferrer">{t.sourceTitle}<ArrowUpRight size={12} /></a>}</div>
+              <div className="topic-meta"><span>{date(t.capturedAt)}</span>{t.category && <span className="topic-category">{t.category}</span>}{t.sourceTitle && <a href={t.sourceUrl} target="_blank" rel="noreferrer">{t.sourceTitle}<ArrowUpRight size={12} /></a>}</div>
               <h3>{t.title}</h3>
               <p className="topic-angle">{t.angle}</p>
               <p className="topic-reason"><Sparkles size={13} />{t.reason}</p>
@@ -630,6 +643,13 @@ export default function App() {
             </div>
           </article>)}</div>
             : <EmptyPanel icon={Flame} title="候选池还是空的" description="输入一个方向，工作台会先找可核对的材料，再给出三个带来源的角度。" action={<button className="button primary small" onClick={() => document.querySelector<HTMLInputElement>('.recon-field input')?.focus()}>输入检索方向</button>} index="01" />}
+          {snapshot!.trends.length > 0 && <details className="raw-trends">
+            <summary><span><TrendingUp size={14} />原始热榜线索</span><span>{snapshot!.trends.length} 条 · 未按账号方向筛选</span></summary>
+            <p>这些只是侦察到的原始条目，不是候选选题。「寻找创作角度」会按账号方向筛材料，再给出三个不同 category 的角度。</p>
+            <div className="raw-trend-list">{snapshot!.trends.map(item => <a key={item.id} href={item.sourceUrl} target="_blank" rel="noreferrer">
+              <span>{item.category || '热点'}</span><strong>{item.title}</strong><em>{item.sourceTitle}</em><ArrowUpRight size={12} />
+            </a>)}</div>
+          </details>}
         </section>
       </div>
     </div>;
@@ -855,7 +875,7 @@ export default function App() {
           <div className="blind-panel-head"><ShieldCheck size={16} /><strong>独立盲评</strong><span className={`channel-code ${blindChip(snapshot!.settings).tone}`}>{snapshot!.settings.blind.ready ? '就绪' : '不可用'}</span></div>
           <p>固定为 <b>CodeBuddy 主 agent → {snapshot!.settings.blind.subagent} 子 agent</b>。主 agent 只负责派发一次子 agent 调用，评分文本取自子 agent 的结果；没有通过调用校验就不会保存评分。</p>
           <small>{snapshot!.settings.blind.detail}</small>
-          <small className="field-note">盲评要求使用模型 API 后端与临时隔离配置；没有 Key 或 CodeBuddy 不可用时，盲评会直接停止，不会改用其他通道。</small>
+          <small className="field-note">模型 API 后端使用临时隔离配置；本机登录态没有一次性配置目录，但同样只传当前稿件与纯评分规则、禁用全部工具。CodeBuddy 不可用时盲评会直接停止，不会改用其他通道。</small>
         </div>
         <div className="settings-footer">
           <div className="availability">
@@ -1067,12 +1087,22 @@ export default function App() {
     {assistantOpen && <><button className="panel-scrim" aria-label="关闭 AI 助手" onClick={() => setAssistantOpen(false)} /><aside className="assistant-panel">
       <div className="assistant-header"><span className="assistant-symbol"><Sparkles size={16} /></span><div><strong>AI 创作助手</strong><small>围绕当前材料共创，不替你下结论</small></div><button className="icon-button" aria-label="关闭 AI 助手" onClick={() => setAssistantOpen(false)}><X size={17} /></button></div>
       <div className="assistant-context">
-        <div className="context-label"><span>本次参考材料</span><span>{selectedWorks.length + (draft ? 1 : 0)} 项</span></div>
-        <div className="context-chips">{draft && <span><FileText size={11} />{draft.title}</span>}{selectedWorks.map(id => <span key={id}><Play size={10} />{snapshot.works.find(w => w.id === id)?.title || '作品'}<button aria-label="移除参考作品" onClick={() => setSelectedWorks(a => a.filter(v => v !== id))}><X size={10} /></button></span>)}{!draft && !selectedWorks.length && <p>打开稿件或勾选作品，AI 会围绕你的材料展开讨论。</p>}</div>
+        <div className="context-label"><span>本次额外材料</span><span>{selectedWorks.length + (draft ? 1 : 0)} 项</span></div>
+        <div className="context-chips">{draft && <span><FileText size={11} />{draft.title}</span>}{selectedWorks.map(id => <span key={id}><Play size={10} />{snapshot.works.find(w => w.id === id)?.title || '作品'}<button aria-label="移除参考作品" onClick={() => setSelectedWorks(a => a.filter(v => v !== id))}><X size={10} /></button></span>)}{!draft && !selectedWorks.length && <p>不勾选也可以：账号资料会随消息自动读取。</p>}</div>
+        <div className="context-loaded">
+          <span className="context-label">已自动读取本机资料</span>
+          {contextSummary ? <div className="context-source">
+            {([['受众画像', contextSummary.audience, contextSummary.truncated.audience], ['评分规则', contextSummary.rubric, contextSummary.truncated.rubric], ['写稿结构', contextSummary.scriptPatterns, contextSummary.truncated.scriptPatterns], ['对标账号', contextSummary.benchmark, contextSummary.truncated.benchmark], ['评分备忘', contextSummary.rubricMemo, contextSummary.truncated.rubricMemo]] as const).map(([label, chars, clipped]) => <span key={label} className={chars > 0 ? 'on' : 'off'} title={chars > 0 ? `已附带 ${chars.toLocaleString('zh-CN')} 字符${clipped ? '（原文更长，仅附前部）' : ''}` : '本地文件缺失或为空'}>{label}{chars > 0 ? ` ${chars.toLocaleString('zh-CN')} 字` : ' 缺失'}{clipped ? ' · 截断' : ''}</span>)}
+            <span className={contextSummary.works ? 'on' : 'off'} title={`本次附带 ${contextSummary.works} 条，本地共 ${contextSummary.worksTotal} 条`}>历史作品 {contextSummary.works} / {contextSummary.worksTotal}</span>
+            <span className={contextSummary.topics ? 'on' : 'off'} title={`本次附带 ${contextSummary.topics} 条，本地共 ${contextSummary.topicsTotal} 条`}>候选选题 {contextSummary.topics} / {contextSummary.topicsTotal}</span>
+            {contextSummary.trends > 0 && <span className="on" title={`本次附带 ${contextSummary.trends} 条，本地共 ${contextSummary.trendsTotal} 条`}>原始线索 {contextSummary.trends} / {contextSummary.trendsTotal}</span>}
+            {contextSummary.draft && <span className="on" title={contextSummary.truncated.draft ? '稿件超过长度上限，仅附带前部' : '当前稿件全文已附带'}>当前稿件 {contextSummary.draftChars.toLocaleString('zh-CN')} 字{contextSummary.truncated.draft ? ' · 截断' : ''}</span>}
+          </div> : <p>正在读取本地文件…</p>}
+        </div>
       </div>
       <div className="chat-messages">
         {snapshot.messages.length ? snapshot.messages.map(m => <div key={m.id} className={`chat-message ${m.role}`}><div className="message-role">{m.role === 'assistant' ? <Sparkles size={12} /> : <span className="mini-avatar">我</span>}<span>{m.role === 'assistant' ? '创作助手' : '你'}</span><time>{time(m.createdAt)}</time></div><div className="message-content">{m.content}</div></div>)
-          : <div className="assistant-welcome"><span className="assistant-kicker">开始一次对话</span><h2>{draft ? '把这篇稿件改得更具体。' : '从材料出发，而不是从空话出发。'}</h2><p>{draft ? '可以让我指出证据不足的段落、比较两种开头，或把一段抽象表达改写成真实经历。' : '打开一篇稿件或勾选作品，我会围绕它们梳理角度、检查证据，并区分事实与假设。'}</p><div className="prompt-suggestions">{['从我的历史作品里，发现值得继续的方向', '帮我把一个模糊的想法讲清楚', '解释一下评审与事前预测的区别'].map((s, i) => <button key={s} onClick={() => void sendChat(s)}><span>{[<Library size={14} />, <MessageSquare size={14} />, <Target size={14} />][i]}</span>{s}<ArrowUpRight size={12} /></button>)}</div></div>}
+          : <div className="assistant-welcome"><span className="assistant-kicker">开始一次对话</span><h2>{draft ? '把这篇稿件改得更具体。' : '从材料出发，而不是从空话出发。'}</h2><p>{draft ? '可以让我指出证据不足的段落、比较两种开头，或把一段抽象表达改写成真实经历。' : '账号画像、评分规则和写稿结构会随消息自动读取。打开稿件或勾选作品，可以再加一层具体材料，我会据此梳理角度、检查证据，并区分事实与假设。'}</p><div className="prompt-suggestions">{['从我的历史作品里，发现值得继续的方向', '帮我把一个模糊的想法讲清楚', '解释一下评审与事前预测的区别'].map((s, i) => <button key={s} onClick={() => void sendChat(s)}><span>{[<Library size={14} />, <MessageSquare size={14} />, <Target size={14} />][i]}</span>{s}<ArrowUpRight size={12} /></button>)}</div></div>}
         {pending.some(t => t.kind === 'chat') && <div className="assistant-thinking"><Spinner />正在整理想法…</div>}
         <div ref={chatEnd} />
       </div>

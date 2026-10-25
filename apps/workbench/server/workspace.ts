@@ -1,14 +1,14 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import type { ChatMessage, Draft, Metrics, Prediction, PredictionDetails, Review, Snapshot, Space, Topic, Work } from '../shared/types.js';
+import type { ChatMessage, ContextSummary, ContextTruncated, Draft, Metrics, Prediction, PredictionDetails, Review, Snapshot, Space, Topic, Work } from '../shared/types.js';
 import { confidenceFor, localIso, renderBenchmarkMarkdown, renderSampleMeta, rubricFileFor, safeDirectoryName, sampleId, type ContentForm, type InitInput, type InitReport, type InitSample, type InitStatus } from '../shared/initialization.js';
 
-type SnapshotData = Pick<Snapshot, 'project' | 'works' | 'drafts' | 'topics' | 'reviews' | 'predictions' | 'messages'>;
+type SnapshotData = Pick<Snapshot, 'project' | 'works' | 'drafts' | 'topics' | 'trends' | 'reviews' | 'predictions' | 'messages'>;
 type Publication = { draftId: string; predictionId: string; url: string; publishedAt: string; platform?: string; platformId?: string; videoFolder?: string; adHocPublish?: boolean };
 type RetroSchedule = { predictionId?: string; draftId?: string; dueAt?: string | null; [key: string]: unknown };
 type InitMetadata = { completedAt: string; contentForm: ContentForm; historyPlatform?: 'douyin-creator-edge'; historyRequested?: number | null; historyImportStatus?: 'pending' | 'imported' | 'failed' | 'cancelled' | 'skipped'; historySamples?: number; historyBaselinePlays?: number | null; historyError?: string };
-type Metadata = { name: string; domain?: string; setupCompletedAt?: string; topics: Topic[]; reviews: Review[]; messages: ChatMessage[]; publications: Publication[]; demoSeeded?: boolean; retroSchedule?: Record<string, RetroSchedule>; legacyPendingRetros?: unknown[]; directionRecorded?: string[]; init?: InitMetadata };
+type Metadata = { name: string; domain?: string; setupCompletedAt?: string; topics: Topic[]; trends: Topic[]; reviews: Review[]; messages: ChatMessage[]; publications: Publication[]; demoSeeded?: boolean; retroSchedule?: Record<string, RetroSchedule>; legacyPendingRetros?: unknown[]; directionRecorded?: string[]; init?: InitMetadata };
 export interface RetroEligibility { published: boolean; publishedAt: string | null; dueAt: string | null; early: boolean }
 export interface RetrospectiveOptions { earlyConfirmed?: boolean; measuredAt?: string; observations?: string[] }
 type RetroRecord = { id?: string; createdAt: string; measuredAt?: string; actual?: Metrics; note?: string; calibrationEligible?: boolean; early_retro?: boolean; observations?: string[] };
@@ -26,6 +26,21 @@ function contentFormOf(state: CheatState): ContentForm {
 export function draftHash(content: string): string { return createHash('sha256').update(content, 'utf8').digest('hex'); }
 const now = () => new Date().toISOString();
 const RETRO_WINDOW_MS = 3 * 86400_000;
+const CONTEXT_LIMITS = { audience: 4_000, rubric: 12_000, scriptPatterns: 10_000, benchmark: 6_000, rubricMemo: 8_000, works: 12, topics: 3, trends: 12, draft: 24_000 } as const;
+const CONTEXT_CLIP_NOTE = '\n\n…[后文因上下文长度限制未提供]';
+function clipContextText(text: string, limit: number): { text: string; truncated: boolean } {
+  if (text.length <= limit) return { text, truncated: false };
+  let cut = text.lastIndexOf('\n', limit);
+  if (cut <= limit * .6) cut = limit;
+  if (cut > 0) { const code = text.charCodeAt(cut - 1); if (code >= 0xD800 && code <= 0xDBFF) cut -= 1; }
+  return { text: `${text.slice(0, cut).trimEnd()}${CONTEXT_CLIP_NOTE}`, truncated: true };
+}
+function clipPlainText(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  let cut = limit - 1;
+  if (cut > 0) { const code = text.charCodeAt(cut - 1); if (code >= 0xD800 && code <= 0xDBFF) cut -= 1; }
+  return `${text.slice(0, cut)}…`;
+}
 const identifier = (prefix: string) => `${prefix}-${randomUUID().slice(0, 12)}`;
 const safeId = (id: string) => /^[^<>:"/\\|?*\x00-\x1f.]{1,160}$/u.test(id) && id.trim() === id;
 const safeText = (value: unknown, fallback = '') => typeof value === 'string' ? value : fallback;
@@ -127,6 +142,7 @@ export class Workspace {
       });
     }
     await this.migratePendingRetros();
+    await this.migrateRawTrends();
     if (this.mode === 'demo') {
       await this.getRubric();
       if (!(await this.state()).metadata?.workbench?.demoSeeded) await this.seedDemo();
@@ -134,7 +150,7 @@ export class Workspace {
   }
 
   private defaultMetadata(): Metadata {
-    return { name: this.mode === 'demo' ? '示例创作者 · 演示空间' : '我的创作工作室', topics: [], reviews: [], messages: [], publications: [] };
+    return { name: this.mode === 'demo' ? '示例创作者 · 演示空间' : '我的创作工作室', topics: [], trends: [], reviews: [], messages: [], publications: [] };
   }
   private async state(): Promise<CheatState> {
     const filename = await this.checkedPath('.cheat-state.json');
@@ -184,6 +200,21 @@ export class Workspace {
       }
       state.pending_retros = paths;
       metadata.legacyPendingRetros = legacy; metadata.retroSchedule = schedule;
+      state.metadata = { ...state.metadata, workbench: metadata };
+      await this.writeState(state);
+    });
+  }
+
+  /** Older builds wrote raw hot-list rows into topics; keep them visible but never as candidates. */
+  private async migrateRawTrends(): Promise<void> {
+    return this.serial(async () => {
+      const state = await this.state();
+      const metadata = this.metadata(state);
+      if (metadata.trends.length || !metadata.topics.length) return;
+      const raw = metadata.topics.filter(topic => /原始线索/.test(topic.angle));
+      if (!raw.length) return;
+      metadata.trends = raw;
+      metadata.topics = metadata.topics.filter(topic => !raw.includes(topic));
       state.metadata = { ...state.metadata, workbench: metadata };
       await this.writeState(state);
     });
@@ -636,9 +667,15 @@ export class Workspace {
   }
 
   async setTopics(topics: Topic[]): Promise<void> {
-    return this.serial(async () => this.updateMetadata((metadata, state) => {
+    return this.serial(async () => this.updateMetadata(metadata => {
       metadata.topics = topics.map(topic => ({ ...topic }));
-      state.last_trends_run_at = now(); state.last_trends_added_count = topics.length;
+    }));
+  }
+
+  async setTrends(trends: Topic[]): Promise<void> {
+    return this.serial(async () => this.updateMetadata((metadata, state) => {
+      metadata.trends = trends.map(topic => ({ ...topic }));
+      state.last_trends_run_at = now(); state.last_trends_added_count = trends.length;
     }));
   }
 
@@ -988,7 +1025,46 @@ export class Workspace {
       historyBaselinePlays: metricValue(metadata.init?.historyBaselinePlays) ?? metricValue(state.baseline_plays),
       rubricFormMismatch: state.rubric_form_mismatch === true,
       rootLabel: this.mode === 'demo' ? '独立演示目录 · 虚构样例' : '本地独立创作目录', upstreamCommit: UPSTREAM_COMMIT },
-      works, drafts, topics: metadata.topics, reviews: metadata.reviews, predictions, messages: metadata.messages };
+      works, drafts, topics: metadata.topics, trends: metadata.trends, reviews: metadata.reviews, predictions, messages: metadata.messages };
+  }
+
+  /** Upstream cheat-seed / cheat-predict read these files before acting; sending only
+   * titles and topics makes the model invent angles without the account's rules. */
+  private async readContextMaterials() {
+    const readOptional = async (name: string, limit: number) => {
+      try { return clipContextText(await this.readFile(name), limit); } catch { return { text: '', truncated: false }; }
+    };
+    const [audience, rubric, scriptPatterns, benchmark, rubricMemo] = await Promise.all([
+      readOptional('audience.md', CONTEXT_LIMITS.audience),
+      readOptional('rubric_notes.md', CONTEXT_LIMITS.rubric),
+      readOptional('script_patterns.md', CONTEXT_LIMITS.scriptPatterns),
+      readOptional('benchmark.md', CONTEXT_LIMITS.benchmark),
+      readOptional('rubric-memo.md', CONTEXT_LIMITS.rubricMemo),
+    ]);
+    return {
+      materials: { audience: audience.text, rubric: rubric.text, scriptPatterns: scriptPatterns.text, benchmark: benchmark.text, rubricMemo: rubricMemo.text },
+      truncated: { audience: audience.truncated, rubric: rubric.truncated, scriptPatterns: scriptPatterns.truncated, benchmark: benchmark.truncated, rubricMemo: rubricMemo.truncated },
+    };
+  }
+
+  async getContextSummary(draftId?: string, workIds?: string[]): Promise<ContextSummary> {
+    const snapshot = await this.getSnapshotData();
+    const draft = draftId ? snapshot.drafts.find(item => item.id === draftId) : null;
+    const draftContext = draft ? clipContextText(draft.content, CONTEXT_LIMITS.draft) : null;
+    const works = workIds !== undefined ? snapshot.works.filter(item => workIds.includes(item.id)) : snapshot.works;
+    const { materials, truncated } = await this.readContextMaterials();
+    return {
+      audience: materials.audience.length,
+      rubric: materials.rubric.length,
+      scriptPatterns: materials.scriptPatterns.length,
+      benchmark: materials.benchmark.length,
+      rubricMemo: materials.rubricMemo.length,
+      works: Math.min(works.length, CONTEXT_LIMITS.works), worksTotal: snapshot.works.length,
+      topics: Math.min(snapshot.topics.length, CONTEXT_LIMITS.topics), topicsTotal: snapshot.topics.length,
+      trends: Math.min(snapshot.trends.length, CONTEXT_LIMITS.trends), trendsTotal: snapshot.trends.length,
+      draft: Boolean(draft), draftChars: draftContext?.text.length ?? 0,
+      truncated: { ...truncated, draft: draftContext?.truncated ?? false },
+    };
   }
 
   async getContext(input: { draftId?: string; workIds?: string[] } = {}): Promise<string> {
@@ -996,11 +1072,79 @@ export class Workspace {
     const draft = input.draftId ? snapshot.drafts.find(item => item.id === input.draftId) : null;
     // An explicit empty selection means the user removed all reference works.
     // Only omitted workIds enables the default history used for topic research.
-    const works = (input.workIds !== undefined ? snapshot.works.filter(item => input.workIds!.includes(item.id)) : snapshot.works.slice(0, 6));
-    return JSON.stringify({ project: snapshot.project.name, domain: this.metadata(await this.state()).domain,
-      draft: draft ? { title: draft.title, content: draft.content, version: draft.version } : null,
-      works: works.slice(0, 10).map(item => ({ title: item.title, url: item.url, metrics: item.metrics, publishedAt: item.publishedAt, description: item.description })),
-      topics: snapshot.topics.slice(0, 3), dataNotice: this.mode === 'demo' ? '所有历史为虚构示例，不代表真实账号。' : '标题和指标不等于完整口播稿，未提供的经历不可编造。' }, null, 2);
+    const works = (input.workIds !== undefined ? snapshot.works.filter(item => input.workIds!.includes(item.id)) : snapshot.works);
+    const draftContext = draft ? clipContextText(draft.content, CONTEXT_LIMITS.draft) : null;
+    const { materials, truncated } = await this.readContextMaterials();
+    const recentReviews = snapshot.reviews.slice(-3).map(review => ({
+      title: snapshot.drafts.find(item => item.id === review.draftId)?.title || review.draftId,
+      createdAt: review.createdAt,
+      dimensions: review.dimensions.map(item => ({ name: item.name, score: item.score, reason: item.reason })),
+      summary: review.summary,
+      suggestions: review.suggestions,
+    }));
+    const recentPredictions = snapshot.predictions.slice(-5).map(prediction => ({
+      title: prediction.title,
+      createdAt: prediction.createdAt,
+      status: prediction.status,
+      publishedAt: prediction.publishedAt,
+      forecast: prediction.forecast,
+      rationale: prediction.rationale,
+      actual: prediction.actual,
+      earlyRetro: prediction.earlyRetro,
+      details: prediction.details ? {
+        headlineBucketId: prediction.details.headlineBucketId,
+        centralEstimate: prediction.details.centralEstimate,
+        probabilities: prediction.details.buckets,
+        factors: prediction.details.factors,
+        assumptions: prediction.details.assumptions,
+        anchorNote: prediction.details.anchorNote,
+      } : undefined,
+    }));
+    return JSON.stringify({
+      account: {
+        name: snapshot.project.name,
+        domain: snapshot.project.domain,
+        contentForm: snapshot.project.contentForm,
+        typicalDurationSeconds: snapshot.project.typicalDurationSeconds,
+        cadenceDays: snapshot.project.cadenceDays,
+        baselinePlays: snapshot.project.baselinePlays,
+        calibrationSamples: snapshot.project.calibrationSamples,
+        confidence: snapshot.project.confidence,
+        benchmarkStatus: snapshot.project.benchmarkStatus,
+        benchmarkName: snapshot.project.benchmarkName,
+        benchmarkSampleCount: snapshot.project.benchmarkSampleCount,
+        historySamples: snapshot.project.historySamples,
+      },
+      draft: draft && draftContext ? { title: draft.title, content: draftContext.text, version: draft.version } : null,
+      works: works.slice(0, CONTEXT_LIMITS.works).map(item => ({
+        id: item.id, title: item.title, url: item.url, metrics: item.metrics, publishedAt: item.publishedAt,
+        description: item.description ? clipPlainText(item.description, 400) : undefined,
+      })),
+      topics: snapshot.topics.slice(0, CONTEXT_LIMITS.topics),
+      rawTrends: snapshot.trends.slice(0, CONTEXT_LIMITS.trends).map(item => ({ title: item.title, category: item.category, sourceUrl: item.sourceUrl, sourceTitle: item.sourceTitle })),
+      loaded: {
+        audience: materials.audience.length,
+        rubric: materials.rubric.length,
+        scriptPatterns: materials.scriptPatterns.length,
+        benchmark: materials.benchmark.length,
+        rubricMemo: materials.rubricMemo.length,
+        works: Math.min(works.length, CONTEXT_LIMITS.works), worksTotal: snapshot.works.length,
+        topics: Math.min(snapshot.topics.length, CONTEXT_LIMITS.topics), topicsTotal: snapshot.topics.length,
+        trends: Math.min(snapshot.trends.length, CONTEXT_LIMITS.trends), trendsTotal: snapshot.trends.length,
+        draft: Boolean(draft), draftChars: draftContext?.text.length ?? 0,
+        truncated: { ...truncated, draft: draftContext?.truncated ?? false },
+        unit: '字符数；数组项为实际附带的条数 / 本地全部条数；0 表示该项本地文件缺失或未加载',
+        note: '这是本条消息实际附带的本机资料清单，以 loaded 为准。对话历史里“没拿到 rubric / pattern”“只有 topic 列表”等说法属于旧版本记录，已失效，不得沿用；某项为 0 时只需如实说明缺哪一项。truncated 为 true 表示该段只提供了前部并在结尾标注了截断，不要声称读到了全文。',
+      },
+      audience: materials.audience,
+      rubric: materials.rubric,
+      scriptPatterns: materials.scriptPatterns,
+      benchmark: materials.benchmark,
+      rubricMemo: materials.rubricMemo,
+      recentReviews,
+      recentPredictions,
+      dataNotice: this.mode === 'demo' ? '所有历史为虚构示例，不代表真实账号。' : '标题和指标不等于完整口播稿，未提供的经历不可编造；历史预测与复盘只用于校准，不得改写。',
+    }, null, 2);
   }
 
   async readFile(relative: string): Promise<string> {

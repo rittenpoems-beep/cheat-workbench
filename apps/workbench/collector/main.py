@@ -202,10 +202,13 @@ def normalize_trends(payload: Any, captured_at: str, limit: int = 20) -> list[di
             continue
         seen.add(word)
         position = numeric(item.get("position"))
+        # The public payload can contain several category lists, each restarting at
+        # position 1. The UI needs one stable rank, so use the merged order here.
         topics.append({
             "title": word,
             "url": "https://www.douyin.com/search/" + quote(word, safe=""),
-            "rank": position if position is not None else index + 1,
+            "rank": index + 1,
+            "source_rank": position,
             "heat": numeric(item.get("hot_value")),
             "capturedAt": captured_at,
             "source": "douyin-hot",

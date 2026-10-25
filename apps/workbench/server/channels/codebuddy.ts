@@ -143,11 +143,12 @@ async function filesUnder(directory: string, depth = 0): Promise<string[]> {
 }
 
 /** A blind run may only leave harmless counters behind; user memory or sessions are fatal. */
-export async function blindIsolationViolations(configDir: string, cwd: string): Promise<string[]> {
+export async function blindIsolationViolations(configDir: string | null, cwd: string): Promise<string[]> {
   const violations: string[] = [];
-  const all = await filesUnder(configDir);
+  // Account-auth blind runs reuse the real config for login, so only the working directory is checked.
+  const all = configDir ? await filesUnder(configDir) : [];
   for (const filename of all) {
-    const relative = path.relative(configDir, filename).replace(/\\/g, '/');
+    const relative = path.relative(configDir!, filename).replace(/\\/g, '/');
     if (relative === 'settings.json') violations.push('临时配置目录出现 settings.json');
     if (relative.split('/').includes('memory')) violations.push(`临时配置目录出现记忆文件：${relative}`);
     if (relative === 'projects' || relative.startsWith('projects/')) {
@@ -290,9 +291,11 @@ export class CodeBuddyChannel implements Channel {
   private async blind(input: ChannelRun): Promise<ChannelResult> {
     throwIfAborted(input.signal);
     if (!this.cliPath) throw new ChannelError('BLIND_CHANNEL_UNAVAILABLE', '盲评需要本机 CodeBuddy CLI，但未检测到该程序。');
-    if (this.options.auth !== 'model-api' || !this.options.apiKey) throw new ChannelError('BLIND_CHANNEL_UNAVAILABLE', '盲评需要 CodeBuddy 的模型 API 后端与临时隔离配置；请先在设置中配置模型 API Key。');
+    if (this.options.auth === 'model-api' && !this.options.apiKey) throw new ChannelError('BLIND_CHANNEL_UNAVAILABLE', '盲评需要 CodeBuddy 的模型 API Key；请先在设置中配置模型 API Key，或切换到本机登录态。');
     const invocation = codeBuddyInvocation(this.cliPath);
-    const model = this.options.blindModel;
+    // Account auth has no throwaway config directory; it keeps only the code-level isolation
+    // (single Agent dispatch, no tools, no MCP, no sessions) and is labelled non-fresh in the UI.
+    const model = this.options.auth === 'account' ? 'auto' : this.options.blindModel;
     const { payload, tokens } = blindPayload(input.system, input.prompt);
     const agents = {
       [BLIND_SUBAGENT]: {
@@ -305,15 +308,15 @@ export class CodeBuddyChannel implements Channel {
     };
     const dispatcher = `你是受限的调度主 agent。你唯一的动作是调用一次名为 Agent 的工具，把下方「盲评载荷」原样交给子 agent ${BLIND_SUBAGENT}，然后原样输出子 agent 返回的文本。\n规则：\n1. 只调用一次 Agent；subagent_type 必须为 "${BLIND_SUBAGENT}"；run_in_background 必须为 false。\n2. Agent 的 prompt 参数必须逐字复制下方载荷全文（包含全部标记行），不得摘要、改写、补充或删除。\n3. 不得自己评分，不得调用其他工具，不得读取或写入文件，不得执行命令，不得补充任何创作者历史、账号、作品或实绩信息。\n\n${payload}`;
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'cheat-codebuddy-blind-'));
-    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cheat-codebuddy-config-'));
+    const configDir = this.options.auth === 'model-api' ? await fs.mkdtemp(path.join(os.tmpdir(), 'cheat-codebuddy-config-')) : undefined;
     try {
-      input.progress(`启动本机 CodeBuddy 主 agent，派生子 agent ${BLIND_SUBAGENT} · ${model}`);
+      input.progress(`启动本机 CodeBuddy 主 agent，派生子 agent ${BLIND_SUBAGENT} · ${model}${configDir ? '' : ' · 登录态'}`);
       const args = [...invocation.prefix, '-p', '--output-format', 'json', '--model', model, '--agents', JSON.stringify(agents), '--tools', 'Agent', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', 'local', '--max-turns', '3'];
       const stdout = await this.execute(invocation.command, args, {
         input: { ...input, prompt: dispatcher }, cwd, configDir, signal: input.signal, blind: true, timeoutMs: 300_000,
         environment: codeBuddyEnvironment({ configDir, apiKey: this.options.apiKey, baseUrl: this.options.baseUrl, blind: true }),
       });
-      const violations = await blindIsolationViolations(configDir, cwd);
+      const violations = await blindIsolationViolations(configDir ?? null, cwd);
       if (violations.length) throw new ChannelError('BLIND_ISOLATION_VIOLATION', `盲评隔离校验失败：${violations.slice(0, 3).join('；')}`);
       const transcript = parseCodeBuddyTranscript(stdout);
       const text = verifyBlindDelegation(transcript, tokens, payload);
@@ -322,11 +325,11 @@ export class CodeBuddyChannel implements Channel {
         text,
         model: transcript.model || model,
         usage: transcript.result?.usage,
-        evidence: { channel: this.id, mode: 'blind-delegate', toolsDisabled: true, freshConfig: true, subagent: BLIND_SUBAGENT, toolCallVerified: true },
+        evidence: { channel: this.id, mode: 'blind-delegate', toolsDisabled: true, freshConfig: Boolean(configDir), subagent: BLIND_SUBAGENT, toolCallVerified: true },
       };
     } finally {
       await fs.rm(cwd, { recursive: true, force: true }).catch(() => undefined);
-      await fs.rm(configDir, { recursive: true, force: true }).catch(() => undefined);
+      if (configDir) await fs.rm(configDir, { recursive: true, force: true }).catch(() => undefined);
     }
   }
 

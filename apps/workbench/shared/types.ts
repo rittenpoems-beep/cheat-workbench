@@ -17,7 +17,7 @@ export type TaskStatus = 'queued' | 'running' | 'waiting' | 'cancelling' | 'comp
 export interface Metrics { plays: number | null; likes: number | null; comments: number | null; shares: number | null; collects: number | null }
 export interface Work { id: string; title: string; url: string; publishedAt: string; capturedAt: string; metrics: Metrics; description?: string; scriptPath?: string; source: string; }
 export interface Draft { id: string; title: string; content: string; path: string; updatedAt: string; version: number; stage: 'draft' | 'reviewed' | 'predicted' | 'published'; }
-export interface Topic { id: string; title: string; angle: string; reason: string; sourceUrl: string; sourceTitle: string; capturedAt: string; personalInput?: string; }
+export interface Topic { id: string; title: string; category?: string; angle: string; reason: string; sourceUrl: string; sourceTitle: string; capturedAt: string; personalInput?: string; }
 export interface Dimension { name: string; score: number; max: number; reason: string; quote: string; }
 export interface ReviewIsolation { freshConfig: boolean; toolsDisabledExceptAgent: boolean; subagent?: string; toolCallVerified?: boolean; }
 export interface ReviewContamination { warning: boolean; note: string; }
@@ -35,6 +35,14 @@ export interface Prediction { id: string; draftId: string; title: string; create
 export interface TaskEvent { at: string; message: string; level?: 'info' | 'warning' | 'error'; }
 export interface Task { id: string; kind: string; label: string; status: TaskStatus; createdAt: string; updatedAt: string; events: TaskEvent[]; error?: string; errorCode?: string; result?: unknown; }
 export interface ChatMessage { id: string; role: 'user' | 'assistant'; content: string; createdAt: string; }
+export interface ContextTruncated {
+  audience: boolean; rubric: boolean; scriptPatterns: boolean; benchmark: boolean; rubricMemo: boolean; draft: boolean;
+}
+export interface ContextSummary {
+  audience: number; rubric: number; scriptPatterns: number; benchmark: number; rubricMemo: number;
+  works: number; worksTotal: number; topics: number; topicsTotal: number; trends: number; trendsTotal: number;
+  draft: boolean; draftChars: number; truncated: ContextTruncated;
+}
 export interface SkillInfo { id: string; name: string; description: string; path: string; }
 export interface Settings {
   provider: PrimaryChannel;
@@ -63,7 +71,7 @@ export interface Snapshot {
     dataCollection: string; poolStatus: string; hooksInstalled: boolean; typicalDurationSeconds: number; cadenceDays: number | null;
     confidence: string; historyImportStatus: string | null; historySamples: number; historyRequested: number | null; historyBaselinePlays: number | null; rubricFormMismatch: boolean;
   };
-  works: Work[]; drafts: Draft[]; topics: Topic[]; reviews: Review[]; predictions: Prediction[]; tasks: Task[]; messages: ChatMessage[]; skills: SkillInfo[]; settings: Settings;
+  works: Work[]; drafts: Draft[]; topics: Topic[]; trends: Topic[]; reviews: Review[]; predictions: Prediction[]; tasks: Task[]; messages: ChatMessage[]; skills: SkillInfo[]; settings: Settings;
 }
 
 // HTTP contract: GET /api/snapshot -> Snapshot

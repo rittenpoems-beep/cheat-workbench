@@ -135,7 +135,7 @@ test('a Node-script CodeBuddy launcher is discovered and executed through the cu
   }
 });
 
-test('blind review refuses to start without the model API backend before spawning anything', async () => {
+test('blind review refuses to start without the model API key before spawning anything', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cheat-codebuddy-refuse-'));
   const saved = process.env.WORKBENCH_CODEBUDDY_CLI;
   try {
@@ -143,16 +143,11 @@ test('blind review refuses to start without the model API backend before spawnin
     const cli = path.join(root, 'codebuddy');
     await fs.writeFile(cli, `require('fs').writeFileSync(${JSON.stringify(marker)}, 'spawned');`);
     process.env.WORKBENCH_CODEBUDDY_CLI = cli; resetCodeBuddyDiscovery();
-    for (const options of [
-      { auth: 'model-api' as const, apiKey: undefined },
-      { auth: 'account' as const, apiKey: 'sk-present-but-account-mode' },
-    ]) {
-      const channel = new CodeBuddyChannel({ auth: options.auth, apiKey: options.apiKey, baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', blindModel: 'deepseek-flash' });
-      await assert.rejects(channel.run({ skill: 'cheat-score-blind', system: '系统', prompt: '稿件', blind: true, json: true, progress: () => undefined }), error => {
-        assert.equal((error as any).code, 'BLIND_CHANNEL_UNAVAILABLE');
-        return true;
-      });
-    }
+    const channel = new CodeBuddyChannel({ auth: 'model-api', apiKey: undefined, baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', blindModel: 'deepseek-flash' });
+    await assert.rejects(channel.run({ skill: 'cheat-score-blind', system: '系统', prompt: '稿件', blind: true, json: true, progress: () => undefined }), error => {
+      assert.equal((error as any).code, 'BLIND_CHANNEL_UNAVAILABLE');
+      return true;
+    });
     await assert.rejects(fs.access(marker));
   } finally {
     if (saved === undefined) delete process.env.WORKBENCH_CODEBUDDY_CLI; else process.env.WORKBENCH_CODEBUDDY_CLI = saved;
@@ -167,6 +162,7 @@ const fs = require('fs');
 const args = process.argv.slice(2);
 if (args.includes('--version')) { console.log('9.9.9-fake'); process.exit(0); }
 fs.writeFileSync(${JSON.stringify(argsFile)}, JSON.stringify(args));
+fs.writeFileSync(${JSON.stringify(argsFile)} + '.env.json', JSON.stringify({ CODEBUDDY_CONFIG_DIR: process.env.CODEBUDDY_CONFIG_DIR ?? null, CODEBUDDY_API_KEY: process.env.CODEBUDDY_API_KEY ?? null }));
 const input = fs.readFileSync(0, 'utf8');
 const result = { type: 'result', subtype: 'success', is_error: false, result: '{"summary":"fake"}', usage: { input_tokens: 120, output_tokens: 12 } };
 if (args.includes('Agent')) {
@@ -229,6 +225,33 @@ test('blind CodeBuddy run delegates through Agent, verifies the transcript and r
     assert.deepEqual(agents[BLIND_SUBAGENT].tools, []);
     assert.ok(agents[BLIND_SUBAGENT].disallowedTools.includes('Bash'));
     assert.equal(args[args.indexOf('--model') + 1], 'deepseek-flash');
+  } finally {
+    if (saved === undefined) delete process.env.WORKBENCH_CODEBUDDY_CLI; else process.env.WORKBENCH_CODEBUDDY_CLI = saved;
+    resetCodeBuddyDiscovery();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('account-auth blind CodeBuddy run keeps login state but still delegates through one Agent call', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cheat-codebuddy-blind-account-'));
+  const saved = process.env.WORKBENCH_CODEBUDDY_CLI;
+  try {
+    const cli = path.join(root, 'codebuddy'), argsFile = path.join(root, 'args.json');
+    await fs.writeFile(cli, fakeCodeBuddy(root, argsFile));
+    process.env.WORKBENCH_CODEBUDDY_CLI = cli; resetCodeBuddyDiscovery();
+    const channel = new CodeBuddyChannel({ auth: 'account', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', blindModel: 'deepseek-flash' });
+    const result = await channel.run({ skill: 'cheat-score-blind', system: '纯评分规则', prompt: '当前稿件', blind: true, json: true, progress: () => undefined });
+    assert.equal(result.text, '{"summary":"from-child"}');
+    assert.equal(result.evidence.mode, 'blind-delegate');
+    assert.equal(result.evidence.freshConfig, false);
+    assert.equal(result.evidence.toolCallVerified, true);
+    const args = JSON.parse(await fs.readFile(argsFile, 'utf8')) as string[];
+    assert.equal(args[args.indexOf('--tools') + 1], 'Agent');
+    assert.equal(args[args.indexOf('--model') + 1], 'auto');
+    assert.equal(JSON.parse(args[args.indexOf('--agents') + 1])[BLIND_SUBAGENT].model, 'auto');
+    const env = JSON.parse(await fs.readFile(argsFile + '.env.json', 'utf8'));
+    assert.equal(env.CODEBUDDY_CONFIG_DIR, null);
+    assert.equal(env.CODEBUDDY_API_KEY, null);
   } finally {
     if (saved === undefined) delete process.env.WORKBENCH_CODEBUDDY_CLI; else process.env.WORKBENCH_CODEBUDDY_CLI = saved;
     resetCodeBuddyDiscovery();

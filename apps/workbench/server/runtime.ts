@@ -179,7 +179,10 @@ export class Runtime {
   private blindAvailability(): { ready: boolean; detail: string } {
     const status = this.status('codebuddy');
     if (!status || status.code === 'not-installed') return { ready: false, detail: '未检测到本机 CodeBuddy CLI，无法进行独立盲评。' };
-    if (this.resolvedAuth() !== 'model-api') return { ready: false, detail: '盲评要求 CodeBuddy 使用模型 API 后端和临时隔离配置；请在设置中切换认证方式。' };
+    if (this.resolvedAuth() === 'account') {
+      if (status.code === 'ready') return { ready: true, detail: `CodeBuddy 主 agent → ${BLIND_SUBAGENT} 子 agent（本机登录态，非全新配置；只传稿件与评分规则）` };
+      return { ready: false, detail: '盲评需要先在本机 CodeBuddy 完成登录，并在设置里点一次「测试连接」。' };
+    }
     if (!this.key) return { ready: false, detail: '盲评需要模型 API Key 作为 CodeBuddy 后端。' };
     return { ready: true, detail: `CodeBuddy 主 agent → ${BLIND_SUBAGENT} 子 agent（临时隔离配置）` };
   }
@@ -273,7 +276,10 @@ export class Runtime {
     const selection = this.select(this.configuration.provider);
     const channel = selection.channel;
     if (!channel?.test) throw new ChannelError('CHANNEL_TEST_UNSUPPORTED', '当前通道暂不支持连接测试。');
-    return channel.test(signal);
+    const result = await channel.test(signal);
+    // A successful login test is the only proof of account auth, so surface it to the UI immediately.
+    if (result.ok) await this.refreshStatuses();
+    return result;
   }
 
   async invoke(request: Invocation): Promise<InvocationResult> {
@@ -288,7 +294,7 @@ export class Runtime {
       const availability = this.blindAvailability();
       if (!availability.ready) throw new ChannelError('BLIND_CHANNEL_UNAVAILABLE', availability.detail);
       channel = this.channels.codebuddy;
-      request.progress(`${availability.detail} · ${this.blindModel()}`);
+      request.progress(`${availability.detail} · ${this.resolvedAuth() === 'account' ? 'auto' : this.blindModel()}`);
     } else {
       const selection = this.select(this.configuration.provider);
       if (!selection.channel) throw new ChannelError('CHANNEL_UNAVAILABLE', selection.issue || '没有可用的执行通道。');

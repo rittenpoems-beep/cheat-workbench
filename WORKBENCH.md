@@ -40,7 +40,7 @@ Windows 双击 `apps/workbench/start-workbench.cmd`。首次缺依赖时会执�
 
 认证有两种：
 
-- 本机 CodeBuddy 登录：使用 CodeBuddy 自己的登录态，不复制、不读取凭据。仅用于非盲任务，不扣本应用的 API 预算。
+- 本机 CodeBuddy 登录：使用 CodeBuddy 自己的登录态，不复制、不读取凭据。盲评与非盲任务都可用，不扣本应用的 API 预算；首次使用需在终端完成 CodeBuddy 登录，并在设置里点一次“测试连接”验证登录态。
 - 模型 API 后端：把独立模型 API 的 Key 与地址通过环境变量交给 CodeBuddy 子进程，并使用临时配置目录。非盲与盲评都可用；非盲调用会计入共享费用估算。
 
 独立模型 API 也能作为单独通道执行非盲任务。默认 DeepSeek `https://api.deepseek.com`、`deepseek-flash`；模型列表从 `/models` 读取。Key 可在界面填写（仅当前进程保存）或在 `.env` 设置 `DEEPSEEK_API_KEY` / `WORKBENCH_MODEL_API_KEY`。参考 `.env.example`。不要将 Key 发送到聊天、提交到 Git 或写入演示材料。两个空间共享、持久保存 API 用量估算；达到估算阈值后停止后续 API 请求。单次调用可能跨过阈值，取消或断网可能无法取回实际用量；这不是账户账单硬上限，也不包含本机 Agent 的订阅额度。计价采用保守的高峰缓存未命中价格，参考 [DeepSeek 官方价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)。
@@ -51,9 +51,14 @@ Windows 双击 `apps/workbench/start-workbench.cmd`。首次缺依赖时会执�
 
 服务端从 CodeBuddy 的 transcript 校验：存在已完成的 `Agent` 调用且类型正确、对应 tool_result 可解析为评分、主 agent 与子 agent 都没有其它工具调用。评分优先取子 agent 的 tool_result，而不是主 agent 的转述；任一校验失败即任务失败，不保存评分。
 
-隔离依赖临时 `CODEBUDDY_CONFIG_DIR`、`--setting-sources local`、`--strict-mcp-config`、`--no-session-persistence` 与自动记忆/会话摘要禁用。因此盲评只接受模型 API 后端，不接受本机账号登录态；没有 Key 或 CodeBuddy 不可用时直接失败，不会改用其他通道。需要说明：子 agent 是同一 CodeBuddy 进程内的独立会话，不是操作系统级子进程；主 agent 负责调度。若 CodeBuddy 未在 transcript 中暴露子 agent 用量，只记录可见用量并标注“子 agent 用量未暴露”，不编造数字。
+隔离分两档，界面会如实标注：
 
-注意：本机 CodeBuddy 当前可能未登录；此时默认回退到模型 API 后端并在界面如实显示。Claude CLI、Codex CLI、Qoder CLI 等通用 Agent 接入仍在持续开发，标记为实验性或未接入，暂不保证兼容；当前完整支持 CodeBuddy 与独立模型 API。
+- 模型 API 后端：临时 `CODEBUDDY_CONFIG_DIR`，配 `--setting-sources local`、`--strict-mcp-config`、`--no-session-persistence` 与自动记忆/会话摘要禁用；评完即删临时目录，并检查目录里没有写入设置、记忆或会话。
+- 本机登录态：没有一次性配置目录（登录态本身必须复用），除此之外的隔离相同——只允许一次 `Agent` 派发、禁用全部工具、关闭 MCP/会话持久化/自动记忆，工作目录必须是空的，评完检查工作目录无写入。界面会明确显示“非全新配置”，不会把它说成全新隔离。
+
+两种方式下，没有可用后端或 CodeBuddy 不可用时都直接失败，不会改用其他通道。需要说明：子 agent 是同一 CodeBuddy 进程内的独立会话，不是操作系统级子进程；主 agent 负责调度。若 CodeBuddy 未在 transcript 中暴露子 agent 用量，只记录可见用量并标注“子 agent 用量未暴露”，不编造数字。
+
+注意：本机 CodeBuddy 未登录且没有配置模型 API Key 时工作台没有可用通道；在设置里登录或填入 Key 后点“测试连接”即可刷新状态。Claude CLI、Codex CLI、Qoder CLI 等通用 Agent 接入仍在持续开发，标记为实验性或未接入，暂不保证兼容；当前完整支持 CodeBuddy 与独立模型 API。
 
 ## 连接抖音与热点
 
