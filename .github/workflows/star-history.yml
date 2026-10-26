@@ -1,18 +1,17 @@
-name: Refresh Star History
+name: Snapshot Upstream Star Counts
 
-# Regenerates docs/star-history.svg from the repo's own star data.
-# Needed because GitHub restricts stargazer `starred_at` timestamps to a
-# repo's admins/collaborators, so star-history.com's anonymous embed no
-# longer renders. The repo's own token CAN read the data, so we self-host.
-#
-# Token: uses GITHUB_TOKEN by default. If that turns out not to have access
-# to starred_at, add a fine-grained PAT (Metadata: Read-only) as the repo
-# secret STAR_HISTORY_TOKEN and it will be used automatically.
+# GitHub restricts stargazer timestamps for repositories where we are not
+# collaborators. Keep the original chart as an archive and collect honest
+# weekly public star-count observations instead.
 
 on:
   schedule:
     - cron: '0 3 * * 1'      # every Monday 03:00 UTC
-  workflow_dispatch:          # manual "Run workflow" button
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/star-history.yml'
+      - 'tools/record-star-count.py'
 
 permissions:
   contents: write
@@ -31,19 +30,17 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Regenerate star-history SVG
-        env:
-          GH_TOKEN: ${{ secrets.STAR_HISTORY_TOKEN || github.token }}
-        run: python3 tools/gen-star-history.py
+      - name: Record public upstream star count
+        run: python3 tools/record-star-count.py
 
-      - name: Commit if changed
+      - name: Commit snapshot if changed
         run: |
-          if [[ -n "$(git status --porcelain docs/star-history.svg)" ]]; then
-            git config user.name  "github-actions[bot]"
+          if [[ -n "$(git status --porcelain docs/star-count-history.json)" ]]; then
+            git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add docs/star-history.svg
-            git commit -m "chore: refresh star-history snapshot [skip ci]"
+            git add docs/star-count-history.json
+            git commit -m "chore: record weekly upstream stars [skip ci]"
             git push
           else
-            echo "star-history.svg unchanged — nothing to commit."
+            echo "Star count snapshot unchanged — nothing to commit."
           fi
